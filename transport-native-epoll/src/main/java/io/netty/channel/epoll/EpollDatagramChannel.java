@@ -545,6 +545,9 @@ public final class EpollDatagramChannel extends AbstractEpollChannel implements 
                                 InetSocketAddress local = (InetSocketAddress) localAddress();
                                 DatagramPacket[] receivedPackets = new DatagramPacket[received];
                                 int bytesRead = 0;
+                                // Its important that we process all received data out of the NativeDatagramPacketArray
+                                // before we call fireChannelRead(...). This is because the user may call flush()
+                                // in a channelRead(...) method and so may re-use the NativeDatagramPacketArray again.
                                 for (int i = 0; i < received; i++) {
                                     NativeDatagramPacket p = packets[i];
                                     DatagramPacket dPacket =
@@ -559,6 +562,9 @@ public final class EpollDatagramChannel extends AbstractEpollChannel implements 
                                 for (DatagramPacket datagramPacket: receivedPackets) {
                                     pipeline.fireChannelRead(datagramPacket);
                                 }
+                                // Need to release as we retained the contained ByteBuf when creating new DatagramPacket
+                                // instances
+                                byteBuf.release();
                                 byteBuf = null;
                             } else {
                                 final DatagramSocketAddress remoteAddress;
@@ -583,12 +589,12 @@ public final class EpollDatagramChannel extends AbstractEpollChannel implements 
                                     localAddress = (InetSocketAddress) localAddress();
                                 }
                                 allocHandle.lastBytesRead(remoteAddress.receivedAmount());
+                                byteBuf.writerIndex(byteBuf.writerIndex() + allocHandle.lastBytesRead());
                                 allocHandle.incMessagesRead(1);
 
                                 readPending = false;
                                 pipeline.fireChannelRead(
-                                        new DatagramPacket(byteBuf, localAddress, (InetSocketAddress) remoteAddress()));
-                                byteBuf.release();
+                                        new DatagramPacket(byteBuf, localAddress, remoteAddress));
                                 byteBuf = null;
                             }
                         }
